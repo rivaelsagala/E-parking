@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR Scanner</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 50px;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            display: block;
+            width: 50%;
+            margin: auto;
+        }
+        textarea {
+            width: 80%;
+            height: 200px;
+            margin-top: 20px;
+            padding: 10px;
+            font-size: 16px;
+        }
+        video {
+            width: 50%;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>OCR Scanner</h1>
+    
+    <!-- Stream video from camera -->
+    <div>
+        <video id="video" autoplay="true" width="50%">
+            <source src="{{ url_for('video') }}" type="video/mp4" />
+        </video>
+    </div>
+
+    <!-- Text area to display OCR result -->
+    <div>
+        <textarea id="ocr-result" placeholder="Hasil OCR akan muncul disini..." readonly></textarea>
+    </div>
+
+    <script>
+// Function to fetch OCR results periodically
+function getOcrText() {
+    fetch('/ocr', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.teks) {
+                document.getElementById('ocr-result').value = data.teks;
+            } else {
+                console.log('Tidak ada teks OCR yang diterima.');
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching OCR result:', error);
+        });
+}
+
+// Periodically fetch OCR result (every 1 second)
+setInterval(getOcrText, 1000);
+
+    </script>
+</body>
+</html>
