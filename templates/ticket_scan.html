@@ -1,0 +1,136 @@
+{% extends "layout.html" %}
+
+{% block title %}Ticket Scan{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <h3 class="text-center mb-4">Scan Ticket QR Code</h3>
+    <br>
+
+    <div class="container text-center">
+        <div class="row align-items-start">
+            <div class="col-md-6">
+                <div class="d-flex justify-content-center">
+                    <div id="qr-reader" class="p-3 border rounded shadow bg-light" style="width: 600px;"></div>
+                </div>
+            </div>
+            <!-- <div class="col-md-1"></div> -->
+            <div class="col-md-6">
+                <div id="result" class="mt-4 text-start"></div>
+                    <div class="d-flex justify-content-center mt-3">
+                        <button class="btn btn-success" id="pay-btn" style="display: none;">Mark as Paid</button>
+                    </div>
+                <div id="payment-result" class="mt-4 text-center"></div>
+            </div>
+        </div>
+    </div>
+
+
+</div>
+
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script>
+    let html5QrcodeScanner;
+    let scannedId = null;
+
+    function onScanSuccess(decodedText, decodedResult) {
+        scannedId = decodedText;
+
+        
+        
+        document.getElementById("pay-btn").style.display = "inline-block";
+
+        fetch(`/api/vehicle/${decodedText}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+    document.getElementById("result").innerHTML = `
+        <div class="card text-start shadow-sm">
+            <div class="card-body">
+                <div class="d-flex flex-column flex-md-row align-items-start">
+                    <img src="/static/images/${data.record.Image}" 
+                        alt="Vehicle Image" 
+                        class="img-thumbnail me-md-4 mb-3" 
+                        style="max-width: 300px;">
+                    <ul class="list-group list-group-flush w-100">
+                        <li class="list-group-item"><strong>Nomor Polisi:
+                            <br>
+                            </strong> ${data.record.NoPol}</li>
+                        <li class="list-group-item"><strong>Payment Status:</strong> ${data.record.PaymentStat}</li>
+                        <li class="list-group-item"><strong>Entry:
+                            <br>
+                            </strong> ${data.record.CreatedAt}</li>
+                        <li class="list-group-item"><strong>Duration:
+                            <br>
+                            </strong> ${data.record.DurationHours} hours</li>
+                        <li class="list-group-item"><strong>Fee:
+                            <br>
+                            </strong> Rp${data.record.Fee.toLocaleString()}</li>
+                    </ul>
+                </div>
+            </div>
+        </div>                        
+    `;
+} else {
+    document.getElementById("result").innerText = data.message;
+}
+
+            });
+    }
+
+    function startScanner() {
+        document.getElementById("result").innerHTML = "";
+        document.getElementById("payment-result").innerHTML = "";
+        document.getElementById("qr-reader").style.display = "block";
+        document.getElementById("pay-btn").style.display = "none";
+
+        html5QrcodeScanner = new Html5QrcodeScanner("qr-reader", { fps: 10, qrbox: 400 });
+
+        html5QrcodeScanner.render(onScanSuccess, () => {
+            const videoElement = document.querySelector("#qr-reader video");
+            if (videoElement) {
+                videoElement.style.transform = "scaleX(-1)";
+            }
+        });
+    }
+
+
+    document.getElementById("pay-btn").addEventListener("click", function () {
+        if (!scannedId) return;
+
+        fetch(`/api/vehicle/pay/${scannedId}`, {
+            method: "POST"
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+    document.getElementById("result").innerHTML = "";
+    document.getElementById("pay-btn").style.display = "none";
+
+    const alertHTML = `
+        <div class="alert alert-success" role="alert" id="payment-alert">
+            Payment successful!<br>
+            <strong>Updated At:</strong> ${data.updatedAt}<br>
+            <strong>Duration:</strong> ${data.durationHours} hours<br>
+            <strong>Total Fee:</strong> Rp${data.fee.toLocaleString()}
+        </div>
+    `;
+    document.getElementById("payment-result").innerHTML = alertHTML;
+
+    // Auto-hide the alert after 3 seconds
+    setTimeout(() => {
+        const alert = document.getElementById("payment-alert");
+        if (alert) {
+            alert.remove();
+        }
+    }, 3000);
+}
+ else {
+                document.getElementById("payment-result").innerText = data.message;
+            }
+        });
+    });
+
+    startScanner();
+</script>
+{% endblock %}
