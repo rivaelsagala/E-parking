@@ -7,12 +7,28 @@ import time
 from datetime import datetime
 from threading import Thread
 import atexit
+import mysql.connector
 
 # Konfigurasi path tesseract untuk Windows
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-# Konfigurasi Serial untuk Arduino
-# Variabel global untuk arduino
+# Configure your MySQL connection
+db_config = {
+    'host': 'localhost',
+    'user': 'root',
+    'password': '',
+    'database': 'parking_system'
+}
+
+def get_connection():
+    try:
+        conn = mysql.connector.connect(**db_config)
+        return conn
+    except mysql.connector.Error as err:
+        print(f"Database connection error: {err}")
+        return None
+
+
 arduino = None
 arduino_connected = False
 
@@ -26,8 +42,7 @@ def connect_arduino():
                 time.sleep(1)  # Beri waktu untuk melepaskan port
             except:
                 pass
-        
-        # Ganti 'COM4' dengan port Arduino Anda (misal: 'COM5' pada Windows atau '/dev/ttyUSB0' pada Linux)
+    
         arduino = serial.Serial('COM4', 9600, timeout=1, write_timeout=1)
         arduino_connected = True
         print("Arduino terhubung!")
@@ -136,6 +151,20 @@ HTML_PAGE = '''
             border-radius: 5px;
             text-align: left;
         }
+        .status-badge {
+            margin-top: 20px;
+            font-size: 1.2rem;
+            padding: 8px 15px;
+            border-radius: 5px;
+        }
+        .status-success {
+            background-color: #2ecc71;
+            color: white;
+        }
+        .status-error {
+            background-color: #e74c3c;
+            color: white;
+        }
     </style>
     <script>
         function updateClock() {
@@ -173,15 +202,30 @@ HTML_PAGE = '''
                     }
                 });
         }
+
+        function checkDatabaseStatus() {
+            fetch('/database_status')
+                .then(response => response.text())
+                .then(status => {
+                    const statusElement = document.getElementById('database-status');
+                    if (status === 'connected') {
+                        statusElement.innerHTML = '<span class="badge bg-success">Database Terhubung</span>';
+                    } else {
+                        statusElement.innerHTML = '<span class="badge bg-danger">Database Tidak Terhubung</span>';
+                    }
+                });
+        }
         
         setInterval(updateClock, 1000);
         setInterval(checkGateStatus, 1000);
         setInterval(checkArduinoStatus, 5000);
+        setInterval(checkDatabaseStatus, 5000);
         
         window.onload = function() {
             updateClock();
             checkGateStatus();
             checkArduinoStatus();
+            checkDatabaseStatus();
         };
     </script>
 </head>
@@ -202,6 +246,9 @@ HTML_PAGE = '''
                     <div id="arduino-status">
                         <span class="badge bg-secondary">Memeriksa Arduino...</span>
                     </div>
+                    <div id="database-status" class="mt-2">
+                        <span class="badge bg-secondary">Memeriksa Database...</span>
+                    </div>
                     <div class="mt-2">
                         <a href="/test_connection" class="btn btn-sm btn-primary">Tes Koneksi</a>
                         <a href="/open_gate" class="btn btn-sm btn-warning">Buka Gerbang Manual</a>
@@ -215,6 +262,11 @@ HTML_PAGE = '''
                         {{ text }}
                     </div>
                     <div id="clock"></div>
+                    {% if db_status %}
+                        <div class="status-badge {% if db_status == 'success' %}status-success{% else %}status-error{% endif %} mt-3">
+                            {{ db_message }}
+                        </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -252,9 +304,41 @@ def open_gate_with_timer():
     else:
         print("Arduino tidak terhubung. Gerbang tidak dapat dioperasikan.")
 
+# Fungsi untuk menyimpan data kendaraan ke database
+def save_vehicle_to_database(plate_number, image_path):
+    try:
+        conn = get_connection()
+        if conn is None:
+            return False, "Koneksi database gagal"
+        
+        cursor = conn.cursor()
+        now = datetime.now()
+        created_at = now.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Menyimpan data ke database
+        query = """
+        INSERT INTO vehicle (NoPol, Image, PaymentStat, CreatedAt)
+        VALUES (%s, %s, 'Unpaid', %s)
+        """
+        cursor.execute(query, (plate_number, image_path, created_at))
+        
+        vehicle_id = cursor.lastrowid
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return True, f"Data berhasil disimpan dengan ID: {vehicle_id}"
+    
+    except mysql.connector.Error as e:
+        print(f"Database error: {e}")
+        return False, f"Gagal menyimpan data: {str(e)}"
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return False, f"Terjadi kesalahan: {str(e)}"
+
 @app.route('/')
 def index():
-    return render_template_string(HTML_PAGE, text=ocr_result)
+    return render_template_string(HTML_PAGE, text=ocr_result, db_status=None, db_message=None)
 
 @app.route('/bantuan')
 def bantuan():
@@ -344,43 +428,73 @@ def arduino_status():
     global arduino_connected
     return "connected" if arduino_connected else "disconnected"
 
+@app.route('/database_status')
+def database_status():
+    try:
+        conn = get_connection()
+        if conn is not None:
+            conn.close()
+            return "connected"
+        return "disconnected"
+    except:
+        return "disconnected"
+
 @app.route('/scan', methods=['POST'])
 def scan():
     global ocr_result, last_frame
-    
+    db_status = None
+    db_message = ""
+
     if last_frame is not None:
         try:
-            # Buat direktori untuk menyimpan foto
-            os.makedirs("photo", exist_ok=True)
+            # Buat file path untuk menyimpan foto
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"photo/scan_{timestamp}.jpg"
+            filename = f"static/photo/scan_{timestamp}.jpg"
             cv2.imwrite(filename, last_frame)
-            
+
             # Preprocessing
             gray = cv2.cvtColor(last_frame, cv2.COLOR_BGR2GRAY)
-            thresh = cv2.adaptiveThreshold(gray, 255,
-                                          cv2.ADAPTIVE_THRESH_MEAN_C,
-                                          cv2.THRESH_BINARY, 15, 8)
-            
+            thresh = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 15, 8
+            )
+
             # OCR
             text = pytesseract.image_to_string(thresh, lang='eng')
             ocr_result = text.strip() if text.strip() else "Tidak ada teks terdeteksi."
-            
+
             # Simpan hasil ke file
             with open("hasil.txt", "w", encoding="utf-8") as f:
                 f.write(ocr_result)
-            
+
+            # Simpan data ke database
+            if ocr_result != "Tidak ada teks terdeteksi.":
+                # Hapus karakter non-alfanumerik dari plat nomor kecuali spasi
+                cleaned_plate = ''.join(c for c in ocr_result if c.isalnum() or c.isspace())
+
+                # Simpan ke database
+                success, message = save_vehicle_to_database(cleaned_plate, filename)
+                db_status = "success" if success else "error"
+                db_message = message
+            else:
+                db_status = "error"
+                db_message = "Gagal mendeteksi plat nomor"
+
             # Buka gerbang dalam thread terpisah agar tidak mengganggu web server
             gate_thread = Thread(target=open_gate_with_timer)
             gate_thread.daemon = True
             gate_thread.start()
+
         except Exception as e:
-            ocr_result = f"Error saat pemrosesan gambar: {str(e)}"
-            print(ocr_result)
+            ocr_result = f"Terjadi kesalahan: {str(e)}"
+            db_status = "error"
+            db_message = "Kesalahan saat pemrosesan gambar"
+
     else:
         ocr_result = "Tidak ada gambar dari kamera."
-    
-    return render_template_string(HTML_PAGE, text=ocr_result)
+        db_status = "error"
+        db_message = "Tidak ada gambar dari kamera"
+
+    return render_template_string(HTML_PAGE, text=ocr_result, db_status=db_status, db_message=db_message)
 
 @app.route('/open_gate', methods=['GET'])
 def open_gate():
@@ -391,6 +505,9 @@ def open_gate():
 
 @app.route('/test_connection', methods=['GET'])
 def test_connection():
+    results = []
+    
+    # Test Arduino
     global arduino_connected
     if arduino_connected:
         try:
@@ -399,18 +516,37 @@ def test_connection():
             time.sleep(0.5)
             response = arduino.readline().decode('utf-8').strip()
             if response == "OK":
-                return "Arduino terhubung dan merespon dengan baik!"
+                results.append("Arduino: Terhubung dan merespon dengan baik!")
             else:
-                return f"Arduino terhubung tapi responsnya tidak sesuai: {response}"
+                results.append(f"Arduino: Terhubung tapi responsnya tidak sesuai: {response}")
         except Exception as e:
             arduino_connected = False
-            return f"Error saat komunikasi dengan Arduino: {str(e)}"
+            results.append(f"Arduino: Error saat komunikasi: {str(e)}")
     else:
         connect_arduino()
         if arduino_connected:
-            return "Arduino berhasil terhubung setelah mencoba ulang!"
+            results.append("Arduino: Berhasil terhubung setelah mencoba ulang!")
         else:
-            return "Arduino tidak dapat dihubungkan. Periksa koneksi dan port serial."
+            results.append("Arduino: Tidak dapat dihubungkan. Periksa koneksi dan port serial.")
+    
+    # Test Database
+    try:
+        conn = get_connection()
+        if conn is not None:
+            results.append("Database: Koneksi berhasil!")
+            conn.close()
+        else:
+            results.append("Database: Koneksi gagal!")
+    except Exception as e:
+        results.append(f"Database: Error koneksi: {str(e)}")
+    
+    # Kembalikan hasil test
+    html_result = "<h2>Hasil Test Koneksi</h2><ul>"
+    for result in results:
+        html_result += f"<li>{result}</li>"
+    html_result += "</ul><a href='/' class='btn btn-primary'>Kembali</a>"
+    
+    return html_result
 
 if __name__ == '__main__':
     import numpy as np  # Import numpy untuk frame kosong jika kamera tidak terdeteksi

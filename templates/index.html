@@ -1,72 +1,52 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OCR Scanner</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            padding: 50px;
-        }
-        #result {
-            margin-top: 20px;
-            padding: 10px;
-            background-color: #f0f0f0;
-            border: 1px solid #ccc;
-            display: block;
-            width: 50%;
-            margin: auto;
-        }
-        textarea {
-            width: 80%;
-            height: 200px;
-            margin-top: 20px;
-            padding: 10px;
-            font-size: 16px;
-        }
-        video {
-            width: 50%;
-            margin-bottom: 20px;
-        }
-    </style>
-</head>
-<body>
-    <h1>OCR Scanner</h1>
-    
-    <!-- Stream video from camera -->
-    <div>
-        <video id="video" autoplay="true" width="50%">
-            <source src="{{ url_for('video') }}" type="video/mp4" />
-        </video>
-    </div>
+{% extends 'layout.html' %}
 
-    <!-- Text area to display OCR result -->
-    <div>
-        <textarea id="ocr-result" placeholder="Hasil OCR akan muncul disini..." readonly></textarea>
-    </div>
+{% block title %}Vehicle Records{% endblock %}
 
-    <script>
-// Function to fetch OCR results periodically
-function getOcrText() {
-    fetch('/ocr', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-            if (data.teks) {
-                document.getElementById('ocr-result').value = data.teks;
-            } else {
-                console.log('Tidak ada teks OCR yang diterima.');
-            }
-        })
-        .catch(error => {
-            console.error('Error fetching OCR result:', error);
-        });
-}
+{% block content %}
+<h1 class="text-center">Vehicle Records</h1>
 
-// Periodically fetch OCR result (every 1 second)
-setInterval(getOcrText, 1000);
+<!-- DataTables CSS -->
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
 
-    </script>
-</body>
-</html>
+<table id="vehicleTable" class="table table-bordered table-striped mt-4">
+    <thead class="table-primary">
+        <tr>
+            <th>ID</th>
+            <th>Plate Number</th>
+            <th>Image</th>
+            <th>Created At</th>
+            <th>Updated At</th>
+            <th>Payment Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td>{{ row[0] }}</td>
+            <td>{{ row[1] }}</td>
+            <td>
+                {% if row[2] %}
+                <img src="{{ row[2] }}" width="100">
+                {% else %}
+                No image
+                {% endif %}
+            </td>
+            <td>{{ row[4] }}</td>
+            <td>{{ row[5] }}</td>
+            <td>{{ row[3] }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<!-- jQuery -->
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<!-- DataTables JS -->
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+
+<script>
+    $(document).ready(function () {
+        $('#vehicleTable').DataTable();
+    });
+</script>
+{% endblock %}
